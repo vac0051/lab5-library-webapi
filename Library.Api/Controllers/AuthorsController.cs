@@ -1,8 +1,7 @@
-﻿using Library.Api.Dtos;
+using Library.Api.Dtos;
 using Library.Data;
 using Library.Data.Entities;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace Library.Api.Controllers;
 
@@ -10,38 +9,32 @@ namespace Library.Api.Controllers;
 [Route("api/[controller]")]
 public sealed class AuthorsController : ControllerBase
 {
-    private readonly LibraryContext _context;
+    private readonly AuthorRepository _authorRepository;
 
-    public AuthorsController(LibraryContext context)
+    public AuthorsController(AuthorRepository authorRepository)
     {
-        _context = context;
+        _authorRepository = authorRepository;
     }
 
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<AuthorDto>>> GetAll(CancellationToken cancellationToken)
     {
-        var authors = await _context.Authors
-            .AsNoTracking()
-            .Include(author => author.Books)
-            .OrderBy(author => author.Name)
-            .Select(author => new AuthorDto
-            {
-                Id = author.Id,
-                Name = author.Name,
-                BookIds = author.Books.Select(book => book.Id).ToList()
-            })
-            .ToListAsync(cancellationToken);
+        var authors = await _authorRepository.GetAllAsync(cancellationToken);
+        
+        var dtos = authors.Select(author => new AuthorDto
+        {
+            Id = author.Id,
+            Name = author.Name,
+            BookIds = [] // В рамках ADO.NET мы не подтягиваем книги сразу, чтобы избежать N+1, возвращаем пустой список
+        }).ToList();
 
-        return Ok(authors);
+        return Ok(dtos);
     }
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<AuthorDto>> GetById(int id, CancellationToken cancellationToken)
     {
-        var author = await _context.Authors
-            .AsNoTracking()
-            .Include(item => item.Books)
-            .FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
+        var author = await _authorRepository.GetByIdAsync(id, cancellationToken);
 
         if (author is null)
         {
@@ -52,7 +45,7 @@ public sealed class AuthorsController : ControllerBase
         {
             Id = author.Id,
             Name = author.Name,
-            BookIds = author.Books.Select(book => book.Id).ToList()
+            BookIds = [] 
         });
     }
 
@@ -64,8 +57,7 @@ public sealed class AuthorsController : ControllerBase
             Name = dto.Name.Trim()
         };
 
-        _context.Authors.Add(author);
-        await _context.SaveChangesAsync(cancellationToken);
+        await _authorRepository.AddAsync(author, cancellationToken);
 
         var result = new AuthorDto
         {
@@ -80,14 +72,14 @@ public sealed class AuthorsController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, AuthorUpsertDto dto, CancellationToken cancellationToken)
     {
-        var author = await _context.Authors.FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
-        if (author is null)
+        var exists = await _authorRepository.ExistsAsync(id, cancellationToken);
+        if (!exists)
         {
             return NotFound();
         }
 
-        author.Name = dto.Name.Trim();
-        await _context.SaveChangesAsync(cancellationToken);
+        var author = new Author { Id = id, Name = dto.Name.Trim() };
+        await _authorRepository.UpdateAsync(author, cancellationToken);
 
         return NoContent();
     }
@@ -95,14 +87,13 @@ public sealed class AuthorsController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
     {
-        var author = await _context.Authors.FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
-        if (author is null)
+        var exists = await _authorRepository.ExistsAsync(id, cancellationToken);
+        if (!exists)
         {
             return NotFound();
         }
 
-        _context.Authors.Remove(author);
-        await _context.SaveChangesAsync(cancellationToken);
+        await _authorRepository.DeleteAsync(id, cancellationToken);
 
         return NoContent();
     }

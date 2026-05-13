@@ -1,0 +1,24 @@
+services:
+  webapi:
+    image: ${DOCKER_REGISTRY-}webapi
+    build:
+      context: .
+      dockerfile: Library.Api/Dockerfile
+    container_name: webapi_container
+    ports:
+      - "8080:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      # Переопределяем строку подключения для контейнера (имя хоста базы данных - "db")
+      - ConnectionStrings__SqlServerConnection=Server=db,1433;Database=LibraryDb;User Id=sa;Password=Your_password123!;TrustServerCertificate=True;Encrypt=False
+    depends_on:
+      - db
+
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: mssql_db_container
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=Your_password123!
+    ports:
+      - "1433:1433"

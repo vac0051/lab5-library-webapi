@@ -1,8 +1,7 @@
-﻿using Library.Api.Dtos;
+using Library.Api.Dtos;
 using Library.Data;
 using Library.Data.Entities;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace Library.Api.Controllers;
 
@@ -10,34 +9,28 @@ namespace Library.Api.Controllers;
 [Route("api/[controller]")]
 public sealed class BooksController : ControllerBase
 {
-    private readonly LibraryContext _context;
+    private readonly BookRepository _bookRepository;
+    private readonly AuthorRepository _authorRepository;
+    private readonly GenreRepository _genreRepository;
 
-    public BooksController(LibraryContext context)
+    public BooksController(BookRepository bookRepository, AuthorRepository authorRepository, GenreRepository genreRepository)
     {
-        _context = context;
+        _bookRepository = bookRepository;
+        _authorRepository = authorRepository;
+        _genreRepository = genreRepository;
     }
 
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<BookDto>>> GetAll(CancellationToken cancellationToken)
     {
-        var books = await _context.Books
-            .AsNoTracking()
-            .Include(book => book.Author)
-            .Include(book => book.Genres)
-            .OrderBy(book => book.Title)
-            .ToListAsync(cancellationToken);
-
+        var books = await _bookRepository.GetAllAsync(cancellationToken);
         return Ok(books.Select(MapToDto).ToList());
     }
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<BookDto>> GetById(int id, CancellationToken cancellationToken)
     {
-        var book = await _context.Books
-            .AsNoTracking()
-            .Include(item => item.Author)
-            .Include(item => item.Genres)
-            .FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
+        var book = await _bookRepository.GetByIdAsync(id, cancellationToken);
 
         if (book is null)
         {
@@ -50,15 +43,13 @@ public sealed class BooksController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<BookDto>> Create(BookUpsertDto dto, CancellationToken cancellationToken)
     {
-        var author = await _context.Authors.FirstOrDefaultAsync(item => item.Id == dto.AuthorId, cancellationToken);
-        if (author is null)
+        var authorExists = await _authorRepository.ExistsAsync(dto.AuthorId, cancellationToken);
+        if (!authorExists)
         {
             return BadRequest("Author does not exist.");
         }
 
-        var genres = await _context.Genres
-            .Where(genre => dto.GenreIds.Contains(genre.Id))
-            .ToListAsync(cancellationToken);
+        var genres = await _genreRepository.GetByIdsAsync(dto.GenreIds, cancellationToken);
 
         if (genres.Count != dto.GenreIds.Count)
         {
@@ -69,15 +60,14 @@ public sealed class BooksController : ControllerBase
         {
             Title = dto.Title.Trim(),
             PublicationYear = dto.PublicationYear,
-            AuthorId = author.Id,
+            AuthorId = dto.AuthorId,
             Genres = genres
         };
 
-        _context.Books.Add(book);
-        await _context.SaveChangesAsync(cancellationToken);
+        await _bookRepository.AddAsync(book, cancellationToken);
 
-        await _context.Entry(book).Reference(item => item.Author).LoadAsync(cancellationToken);
-        await _context.Entry(book).Collection(item => item.Genres).LoadAsync(cancellationToken);
+        // Fetch author to return full DTO
+        book.Author = await _authorRepository.GetByIdAsync(dto.AuthorId, cancellationToken);
 
         var result = MapToDto(book);
         return CreatedAtAction(nameof(GetById), new { id = book.Id }, result);
@@ -86,24 +76,20 @@ public sealed class BooksController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, BookUpsertDto dto, CancellationToken cancellationToken)
     {
-        var book = await _context.Books
-            .Include(item => item.Genres)
-            .FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
+        var book = await _bookRepository.GetByIdAsync(id, cancellationToken);
 
         if (book is null)
         {
             return NotFound();
         }
 
-        var authorExists = await _context.Authors.AnyAsync(item => item.Id == dto.AuthorId, cancellationToken);
+        var authorExists = await _authorRepository.ExistsAsync(dto.AuthorId, cancellationToken);
         if (!authorExists)
         {
             return BadRequest("Author does not exist.");
         }
 
-        var genres = await _context.Genres
-            .Where(genre => dto.GenreIds.Contains(genre.Id))
-            .ToListAsync(cancellationToken);
+        var genres = await _genreRepository.GetByIdsAsync(dto.GenreIds, cancellationToken);
 
         if (genres.Count != dto.GenreIds.Count)
         {
@@ -115,21 +101,20 @@ public sealed class BooksController : ControllerBase
         book.AuthorId = dto.AuthorId;
         book.Genres = genres;
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _bookRepository.UpdateAsync(book, cancellationToken);
         return NoContent();
     }
 
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
     {
-        var book = await _context.Books.FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
+        var book = await _bookRepository.GetByIdAsync(id, cancellationToken);
         if (book is null)
         {
             return NotFound();
         }
 
-        _context.Books.Remove(book);
-        await _context.SaveChangesAsync(cancellationToken);
+        await _bookRepository.DeleteAsync(id, cancellationToken);
 
         return NoContent();
     }
